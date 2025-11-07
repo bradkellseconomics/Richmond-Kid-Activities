@@ -6,7 +6,7 @@ from .models import Source
 
 DEFAULT_SOURCES = [
     # Start with structured or ICS if available; add HTML pages next.
-    {"name": "Children's Museum of Richmond (Events)", "url": "https://c-mor.org/events/", "kind": "html"},
+    {"name": "Children's Museum of Richmond (Events)", "url": "https://www.childrensmuseumofrichmond.org/events/", "kind": "html"},
     {"name": "Science Museum of Virginia (Calendar)", "url": "https://smv.org/calendar/", "kind": "html"},
     {"name": "Richmond Public Library (Events)", "url": "https://rvalibrary.org/events/", "kind": "html"},
     {"name": "VMFA (Events)", "url": "https://vmfa.museum/calendar/", "kind": "html"},
