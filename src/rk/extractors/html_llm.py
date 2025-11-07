@@ -51,13 +51,41 @@ class HTMLLLMExtractor(Extractor):
     def __init__(self):
         self.client = OpenAI(api_key=CFG.openai_api_key)
 
-    def discover(self, source_url: str) -> list[RawItem]:
-        r = requests.get(source_url, timeout=25)
+def discover(self, source_url: str) -> list[RawItem]:
+    import requests
+    from urllib.parse import urlparse, urlunparse
+
+    def _fetch(url: str):
+        return requests.get(
+            url,
+            timeout=25,
+            headers={"User-Agent": "rk-bot/1.0 (+https://github.com/)"},
+        )
+
+    try:
+        r = _fetch(source_url)
         r.raise_for_status()
-        html = HTMLParser(r.text)
-        main = html.css_first("main") or html.css_first("article") or html
-        text = main.text(separator="\n")
-        return [RawItem(source_url=source_url, payload={"text": text})]
+    except requests.exceptions.SSLError as e:
+        # Retry without 'www.' (common cert mismatch)
+        try:
+            u = urlparse(source_url)
+            host = u.netloc.replace("www.", "")
+            fallback = urlunparse((u.scheme, host, u.path, u.params, u.query, u.fragment))
+            r = _fetch(fallback)
+            r.raise_for_status()
+        except Exception as e2:
+            print(f"[WARN] SSL issue for {source_url}; fallback failed: {e2}")
+            return []
+    except Exception as e:
+        print(f"[WARN] HTMLLLMExtractor discover failed for {source_url}: {e}")
+        return []
+
+    from selectolax.parser import HTMLParser
+    html = HTMLParser(r.text)
+    main = html.css_first("main") or html.css_first("article") or html
+    text = main.text(separator="\n")
+    return [RawItem(source_url=source_url, payload={"text": text})]
+
 
     def normalize(self, items: list[RawItem]) -> list[NormalizedEvent]:
         out = []
