@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+  <body style="font-family:Arial, sans-serif;">
+    <h2>Richmond Kids: Next Week’s Picks</h2>
+    <h3>Top Picks</h3>
+    <ul>
+      {% for e in top %}
+      <li>
+        <strong>{{e.title}}</strong> — {{e.start_dt}}
+        {% if e.venue_name %} at {{e.venue_name}}{% endif %}
+        {% if e.registration_url %} — <a href="{{e.registration_url}}">Details</a>{% endif %}
+        <div style="color:#555">{{e.description}}</div>
+      </li>
+      {% endfor %}
+    </ul>
+    {% if more %}
+    <h3>More Options</h3>
+    <ul>
+      {% for e in more %}
+      <li>{{e.title}} — {{e.start_dt}}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </body>
+  </html>
+

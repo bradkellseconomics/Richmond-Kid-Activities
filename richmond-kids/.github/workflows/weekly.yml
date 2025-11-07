@@ -1,0 +1,26 @@
+name: weekly
+on:
+  schedule:
+    - cron: "5 14 * * 5"  # 09:05 America/New_York (UTC offset handled by cron UTC)
+  workflow_dispatch: {}
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install -e .
+      - run: mkdir -p data
+      - run: rk init
+      - run: rk weekly
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+          TO_EMAILS: ${{ secrets.TO_EMAILS }}
+          DB_PATH: data/richmond.db
+

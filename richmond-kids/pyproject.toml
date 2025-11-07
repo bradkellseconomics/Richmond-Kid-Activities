@@ -1,0 +1,37 @@
+[project]
+name = "richmond-kids"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "openai>=1.40.0",
+  "SQLAlchemy>=2.0.30",
+  "requests>=2.32.0",
+  "python-dateutil>=2.9.0",
+  "dateparser>=1.2.0",
+  "pytz>=2024.1",
+  "Jinja2>=3.1.4",
+  "feedparser>=6.0.11",
+  "extruct>=0.17.0",
+  "w3lib>=2.2.1",
+  "lxml>=5.2.0",
+  "selectolax>=0.3.21",
+  "ics>=0.7.2",
+  "rapidfuzz>=3.9.6",
+  "python-dotenv>=1.0.1",
+]
+
+[project.scripts]
+rk = "rk.cli:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+rk = ["templates/*.j2"]

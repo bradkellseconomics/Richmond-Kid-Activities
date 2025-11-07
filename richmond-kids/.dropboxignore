@@ -1,0 +1,26 @@
+# Version control
+.git/
+.gitignore
+
+# Python caches and metadata
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Data and local databases
+data/
+*.db
+*.sqlite
+
+# Editors/OS
+.DS_Store
+.idea/
+.vscode/
+
