@@ -17,6 +17,15 @@ class Config:
     from_email: str = os.getenv("FROM_EMAIL", "")
     to_emails: list[str] = tuple(e.strip() for e in os.getenv("TO_EMAILS","" ).split(",") if e.strip())
     db_path: str = os.getenv("DB_PATH", "./data/richmond.db")
+    # Comma-separated ages, e.g. "1,2" or "5,8"
+    kids_ages: tuple[int, ...] = tuple(
+        int(x) for x in os.getenv("KIDS_AGES", "5,8").split(",") if x.strip().isdigit()
+    ) or (5, 8)
+    # Toddler-focused scoring toggles (hard-coded)
+    toddler_mode: bool = True
+    latest_hour_ok: int = 19   # 7pm cutoff for toddler-friendly
+    earliest_hour_ok: int = 8
+    strict_age_required: bool = False
 
 
 CFG = Config()

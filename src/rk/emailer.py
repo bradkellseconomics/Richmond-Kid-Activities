@@ -2,6 +2,7 @@ from __future__ import annotations
 import smtplib
 from email.message import EmailMessage
 from jinja2 import Environment, PackageLoader, select_autoescape
+from dateutil import parser as dtp
 from .config import CFG
 
 
@@ -11,12 +12,52 @@ env = Environment(
 )
 
 
-def render_newsletter(top: list[dict], more: list[dict]) -> tuple[str, str]:
+def _fmt_dt(s: str) -> str:
+    try:
+        dt = dtp.parse(s)
+        # If exactly midnight, treat as unknown time to avoid fake 12:00 AM
+        if dt.hour == 0 and dt.minute == 0:
+            return dt.strftime("%a %b %d") + ", Time TBD"
+        return dt.strftime("%a %b %d, %I:%M %p").lstrip("0").replace(" 0", " ")
+    except Exception:
+        return s
+
+
+def _snippet(text: str, limit: int = 240) -> str:
+    if not text:
+        return ""
+    t = " ".join(text.split())
+    return t if len(t) <= limit else t[:limit].rsplit(" ", 1)[0] + "…"
+
+
+env.filters["fmt_dt"] = _fmt_dt
+env.filters["snippet"] = _snippet
+
+
+def render_newsletter(top: list[dict], more: list[dict], week_range: str | None = None) -> tuple[str, str]:
     tpl = env.get_template("newsletter.html.j2")
-    html = tpl.render(top=top, more=more)
+    html = tpl.render(top=top, more=more, week_range=week_range)
+    def _src(e):
+        return f" via {e.get('source_name')}" if e.get('source_name') else ""
+
+    heading = f"Top Picks for the week of {week_range}:" if week_range else "Top Picks:"
     text = "\n".join(
-        ["Top Picks:"] + [f"- {e['title']} ({e['start_dt']}) @ {e.get('venue_name') or ''}" for e in top] +
-        ["", "More:"] + [f"- {e['title']} ({e['start_dt']})" for e in more]
+        [heading]
+        + [
+            (
+                f"- {e['title']} ({e['start_dt']}) @ {e.get('venue_name') or ''}{_src(e)}"
+                + (f"\n    {e.get('occurrence_summary')}" if e.get('occurrence_summary') else "")
+            )
+            for e in top
+        ]
+        + ["", "More:"]
+        + [
+            (
+                f"- {e['title']} ({e['start_dt']}) @ {e.get('venue_name') or ''}{_src(e)}"
+                + (f"\n    {e.get('occurrence_summary')}" if e.get('occurrence_summary') else "")
+            )
+            for e in more
+        ]
     )
     return html, text
 
@@ -32,4 +73,3 @@ def send_email(subject: str, html: str, text: str):
         s.starttls()
         s.login(CFG.smtp_user, CFG.smtp_pass)
         s.send_message(msg)
-

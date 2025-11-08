@@ -1,15 +1,19 @@
 <!doctype html>
 <html>
   <body style="font-family:Arial, sans-serif;">
-    <h2>Richmond Kids: Next Week’s Picks</h2>
-    <h3>Top Picks</h3>
+    <h2>Richmond Kids — Week of {{ week_range }}</h2>
+    <h3>Top Picks{% if week_range %} for the week of {{ week_range }}{% endif %}</h3>
     <ul>
       {% for e in top %}
       <li>
-        <strong>{{e.title}}</strong> — {{e.start_dt}}
+        <strong>{{e.title}}</strong> — {{ e.start_dt | fmt_dt }}
         {% if e.venue_name %} at {{e.venue_name}}{% endif %}
+        {% if e.source_name %} • Source: {{e.source_name}}{% endif %}
         {% if e.registration_url %} — <a href="{{e.registration_url}}">Details</a>{% endif %}
-        <div style="color:#555">{{e.description}}</div>
+        {% if e.occurrence_summary %}
+        <div style="color:#777; font-size: 90%;">{{ e.occurrence_summary }}</div>
+        {% endif %}
+        <div style="color:#555">{{ e.description | snippet(280) }}</div>
       </li>
       {% endfor %}
     </ul>
@@ -17,10 +21,9 @@
     <h3>More Options</h3>
     <ul>
       {% for e in more %}
-      <li>{{e.title}} — {{e.start_dt}}</li>
+      <li>{{e.title}} — {{ e.start_dt | fmt_dt }}{% if e.venue_name %} at {{e.venue_name}}{% endif %}{% if e.source_name %} • {{e.source_name}}{% endif %}</li>
       {% endfor %}
     </ul>
     {% endif %}
   </body>
   </html>
-
