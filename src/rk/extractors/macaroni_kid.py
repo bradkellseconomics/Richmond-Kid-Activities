@@ -27,6 +27,19 @@ UA = {
 
 DEBUG = os.getenv("RK_DEBUG", "0") == "1"
 LOCAL_TZ = dttz.gettz("America/New_York")
+MACKID_HEADFUL = os.getenv("RK_MACKID_HEADFUL", "0") == "1"
+try:
+    MACKID_SLOWMO = int(os.getenv("RK_MACKID_SLOWMO", "0"))
+except Exception:
+    MACKID_SLOWMO = 0
+try:
+    MACKID_TIMEOUT_MS = int(os.getenv("RK_MACKID_TIMEOUT_MS", "30000"))
+except Exception:
+    MACKID_TIMEOUT_MS = 30000
+try:
+    MACKID_MAX_EVENTS = int(os.getenv("RK_MACKID_MAX_EVENTS", "200"))
+except Exception:
+    MACKID_MAX_EVENTS = 200
 
 def dprint(*args):
     if DEBUG:
@@ -296,7 +309,11 @@ def _playwright_context():
     pw = None; browser = None; ctx = None
     try:
         pw = sync_playwright().start()
-        browser = pw.chromium.launch(headless=True, args=["--no-sandbox"])
+        browser = pw.chromium.launch(
+            headless=not MACKID_HEADFUL,
+            slow_mo=MACKID_SLOWMO,
+            args=["--no-sandbox"],
+        )
         ctx = browser.new_context(
             user_agent=UA["User-Agent"],
             viewport={"width": 1366, "height": 900},
@@ -368,16 +385,58 @@ class MacaroniKidExtractor(Extractor):
         # Playwright path
         try:
             p = ctx.new_page()
-            p.set_default_timeout(20000)
+            p.set_default_timeout(MACKID_TIMEOUT_MS)
+            _ensure_dir(P_MACKID_DEBUG)
+
+            def _append_log(fname: str, line: str) -> None:
+                try:
+                    with open(os.path.join(P_MACKID_DEBUG, fname), "a", encoding="utf-8") as f:
+                        f.write(line + "\n")
+                except Exception:
+                    pass
+
+            # Attach listeners before navigation
+            try:
+                p.on("console", lambda msg: _append_log("console.log", f"{msg.type} | {msg.text}"))
+            except Exception:
+                pass
+            try:
+                p.on("pageerror", lambda err: _append_log("pageerror.log", str(err)))
+            except Exception:
+                pass
+            try:
+                def _req_failed(req):
+                    try:
+                        fail = req.failure() if callable(getattr(req, "failure", None)) else req.failure
+                    except Exception:
+                        fail = None
+                    _append_log("requestfailed.log", f"{fail} | {req.method} | {req.url}")
+                p.on("requestfailed", _req_failed)
+            except Exception:
+                pass
+            try:
+                def _resp_handler(resp):
+                    try:
+                        url = resp.url or ""
+                        status = resp.status
+                        if status and status >= 400:
+                            return _append_log("responses_nonok.log", f"{status} | {url} | {resp.headers.get('content-type', '')}")
+                        lowered = url.lower()
+                        if any(k in lowered for k in ["macaronikid", "/events", "graphql", "api", "search", "algolia"]):
+                            if not (200 <= status < 400):
+                                _append_log("responses_nonok.log", f"{status} | {url} | {resp.headers.get('content-type', '')}")
+                    except Exception:
+                        pass
+                p.on("response", _resp_handler)
+            except Exception:
+                pass
             dprint(f"Go to {source_url}")
             p.goto(source_url, wait_until="domcontentloaded")
             try:
-                p.wait_for_load_state("networkidle")
+                p.wait_for_load_state("networkidle", timeout=MACKID_TIMEOUT_MS)
             except Exception:
                 pass
             p.wait_for_timeout(800)
-            if DEBUG:
-                _ensure_dir(P_MACKID_DEBUG)
 
             # Attempt to clear consent/overlay prompts
             try:
@@ -424,10 +483,79 @@ class MacaroniKidExtractor(Extractor):
             except Exception:
                 pass
 
-            # Scroll to trigger lazy load
-            for _ in range(6):
+            # Progressive scrolls while watching for event anchors
+            def _event_count() -> int:
+                try:
+                    return p.locator("a[href*='/events/']").count()
+                except Exception:
+                    return 0
+
+            prev_count = _event_count()
+            for _ in range(10):
                 p.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                p.wait_for_timeout(650)
+                p.wait_for_timeout(1000)
+                try:
+                    p.wait_for_load_state("networkidle", timeout=MACKID_TIMEOUT_MS)
+                except Exception:
+                    pass
+                cur = _event_count()
+                if cur > 0 and cur == prev_count:
+                    break
+                prev_count = cur
+
+            # Alternate navigation buttons (e.g., NEXT WEEK/MONTH)
+            if _event_count() == 0:
+                for label in ["NEXT WEEK", "NEXT MONTH", "Next Week", "Next Month"]:
+                    try:
+                        btn = p.get_by_text(label, exact=False)
+                        if btn and btn.count() > 0:
+                            btn.first.click(timeout=2000)
+                            try:
+                                p.wait_for_load_state("networkidle", timeout=MACKID_TIMEOUT_MS)
+                            except Exception:
+                                pass
+                            p.wait_for_timeout(800)
+                            if _event_count() > 0:
+                                break
+                    except Exception:
+                        pass
+
+            # Capture hydrated page state
+            try:
+                html_after = p.content()
+                with open(os.path.join(P_MACKID_DEBUG, "list_after.html"), "w", encoding="utf-8") as f:
+                    f.write(html_after)
+            except Exception:
+                pass
+            try:
+                p.screenshot(path=os.path.join(P_MACKID_DEBUG, "list_after.png"), full_page=True)
+            except Exception:
+                pass
+
+            # Dump hrefs for inspection
+            try:
+                all_hrefs = p.eval_on_selector_all("a", "els => els.map(e => e.getAttribute('href'))")
+            except Exception:
+                all_hrefs = []
+            try:
+                event_hrefs = p.eval_on_selector_all(
+                    "a[href*='/events/']",
+                    "els => els.map(e => e.getAttribute('href')).filter(Boolean)"
+                )
+            except Exception:
+                event_hrefs = []
+            try:
+                with open(os.path.join(P_MACKID_DEBUG, "hrefs.txt"), "w", encoding="utf-8") as f:
+                    f.write(f"event_href_count={len(event_hrefs)}\n")
+                    f.write(f"all_href_count={len(all_hrefs)}\n")
+                    f.write("--- event hrefs ---\n")
+                    for h in event_hrefs:
+                        f.write(str(h) + "\n")
+                    f.write("--- all hrefs ---\n")
+                    for h in all_hrefs:
+                        f.write(str(h) + "\n")
+            except Exception:
+                pass
 
             # Collect event links
             hrefs = p.eval_on_selector_all(
@@ -491,6 +619,8 @@ class MacaroniKidExtractor(Extractor):
                     pass
             if rk_limit:
                 links = links[:rk_limit]
+            if MACKID_MAX_EVENTS:
+                links = links[:MACKID_MAX_EVENTS]
             dprint(f"found {len(links)} event links")
 
             # Visit each event page and stash rendered HTML
