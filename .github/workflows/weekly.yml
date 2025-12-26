@@ -1,24 +1,49 @@
 name: weekly
 on:
   schedule:
-    - cron: "5 14 * * 5"  # 09:05 America/New_York (UTC offset handled by cron UTC)
+    - cron: "5 14 * * 5"  # 09:05 America/New_York (cron is UTC)
   workflow_dispatch: {}
+
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
+        with:
+          python-version: "3.11"
+
       - name: Install Playwright (pip)
         run: pip install playwright
+
       - name: Install Playwright browsers
         run: python -m playwright install --with-deps chromium
+
       - run: pip install -e .
       - run: mkdir -p data
       - run: rk init
-      - run: rk weekly
+
+      - name: Show sources in DB
+        run: |
+          python - << 'PY'
+          import os, sqlite3
+          db = os.environ.get("DB_PATH", "data/richmond.db")
+          con = sqlite3.connect(db)
+          rows = con.execute(
+              "SELECT name, kind, active, url FROM sources ORDER BY kind, name"
+          ).fetchall()
+          print("DB:", db)
+          for r in rows:
+              print(r)
+          PY
         env:
+          DB_PATH: data/richmond.db
+
+      - name: Run weekly
+        run: rk weekly
+        env:
+          RK_DEBUG: "1"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
