@@ -28,3 +28,12 @@ jobs:
           TO_EMAILS: ${{ secrets.TO_EMAILS }}
           KIDS_AGES: 1,2
           DB_PATH: data/richmond.db
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rk-output
+          path: |
+            newsletter_output/last_normalized.csv
+            newsletter_output/last_skips.log
+            newsletter_output/mackid_debug/**

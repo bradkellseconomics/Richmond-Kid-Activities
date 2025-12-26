@@ -40,6 +40,7 @@ def _ensure_dir(p: str) -> str:
 P_DEBUG = _ensure_dir(os.path.join("data", "debug", "macaroni_kid"))
 P_PAGES = _ensure_dir(os.path.join(P_DEBUG, "pages"))
 P_NEWS  = _ensure_dir("newsletter_output")
+P_MACKID_DEBUG = os.path.join(P_NEWS, "mackid_debug")
 
 # --------------- sanitizers ---------------
 SCRIPT_TAG_PAT   = re.compile(r"<script\b[^>]*>[\s\S]*?</script>", re.I)
@@ -370,7 +371,46 @@ class MacaroniKidExtractor(Extractor):
             p.set_default_timeout(20000)
             dprint(f"Go to {source_url}")
             p.goto(source_url, wait_until="domcontentloaded")
-            p.wait_for_timeout(1200)
+            try:
+                p.wait_for_load_state("networkidle")
+            except Exception:
+                pass
+            p.wait_for_timeout(800)
+            if DEBUG:
+                _ensure_dir(P_MACKID_DEBUG)
+
+            # Attempt to clear consent/overlay prompts
+            try:
+                for txt in ["Accept", "I Agree", "Agree", "OK"]:
+                    try:
+                        loc = p.locator(f'button:has-text("{txt}")')
+                        if loc.count() > 0:
+                            loc.first.click(timeout=1500)
+                            p.wait_for_timeout(350)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # Click weekday/date tabs to hydrate content
+            tabs = []
+            try:
+                tabs = p.locator("a, button").filter(has_text=r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d{1,2}$").all()
+            except Exception:
+                tabs = []
+            if not tabs:
+                try:
+                    tabs = p.locator("a[href^='#']").all()
+                except Exception:
+                    tabs = []
+            for t in tabs[:7]:
+                try:
+                    t.click()
+                    p.wait_for_timeout(450)
+                    p.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    p.wait_for_timeout(450)
+                except Exception:
+                    pass
 
             # Click weekday tabs to hydrate lists
             try:
@@ -398,6 +438,57 @@ class MacaroniKidExtractor(Extractor):
                 urljoin(p.url, h) for h in hrefs
                 if "/events/calendar" not in h and "/events/submit" not in h
             })
+            if len(links) == 0:
+                try:
+                    _ensure_dir(P_MACKID_DEBUG)
+                    try:
+                        p.screenshot(path=os.path.join(P_MACKID_DEBUG, "list.png"), full_page=True)
+                    except Exception:
+                        pass
+                    try:
+                        html = p.content()
+                        with open(os.path.join(P_MACKID_DEBUG, "list.html"), "w", encoding="utf-8") as f:
+                            f.write(html)
+                    except Exception:
+                        pass
+                    log_lines = []
+                    try:
+                        title = p.title()
+                    except Exception:
+                        title = ""
+                    try:
+                        body_txt = p.evaluate("() => (document.body && document.body.innerText) ? document.body.innerText : ''")
+                    except Exception:
+                        body_txt = ""
+                    body_head = re.sub(r"\\s+", " ", (body_txt or ""))[:500]
+                    try:
+                        counts = {
+                            "event_links": p.locator("a[href*='/events/']").count(),
+                            "events_text": p.locator("text=EVENTS").count(),
+                            "subscribe_text": p.locator("text=Subscribe").count(),
+                        }
+                    except Exception:
+                        counts = {}
+                    log_lines.append(f"url: {p.url}")
+                    log_lines.append(f"title: {title}")
+                    log_lines.append(f"body_head: {body_head}")
+                    if counts:
+                        for k, v in counts.items():
+                            log_lines.append(f"count:{k}={v}")
+                    try:
+                        with open(os.path.join(P_MACKID_DEBUG, "list_head.txt"), "w", encoding="utf-8") as f:
+                            for line in log_lines:
+                                f.write(line + "\n")
+                    except Exception:
+                        pass
+                    dprint("No links found; wrote mackid_debug artifacts")
+                    if DEBUG:
+                        dprint("title:", title)
+                        dprint("body head:", body_head)
+                        if counts:
+                            dprint("counts:", counts)
+                except Exception:
+                    pass
             if rk_limit:
                 links = links[:rk_limit]
             dprint(f"found {len(links)} event links")
