@@ -18,3 +18,8 @@ Lightweight pipeline to harvest family-friendly events around Richmond, VA; norm
 - Uses SQLite for storage (path via `DB_PATH`). Ensure its parent folder exists; `rk init` will create it.
 - Extractors: Schema.org (JSON-LD), RSS, ICS, and a generic HTML→LLM extractor using OpenAI Structured Outputs.
 - GitHub Actions workflow included at `.github/workflows/weekly.yml` for Friday morning sends.
+- **Windows-only local dev quirk**: if `rk harvest`/`preview` crashes hard mid-run with a `RecursionError`
+  fatal-error dump (not a normal Python traceback), it's `colorama` (a transitive Windows-only dependency
+  of `tqdm`) hitting a real infinite-recursion bug when `tatsu` (used by the `ics` package) tries to print
+  a colored parse warning to a piped console. Fix: `pip uninstall colorama -y`. It comes back any time
+  `pip install -e .` reinstalls dependencies. Doesn't affect GitHub Actions (Linux runners don't hit this).

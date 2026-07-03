@@ -64,17 +64,30 @@ def _system_prompt(kids: tuple[dict, ...]) -> str:
     return f"""You are picking family activities from a local Richmond, VA events feed for these kids:
 {kid_lines}
 
+Where the family lives: {CFG.home_location}
+
 For every event, judge its fit for EACH kid separately as "top", "good", or "skip":
 - "top": a strong, specific fit — the age range clearly includes the kid, or the event matches one of
-  their named interests, or it's an obvious toddler/preschool program (storytime, sensory play, parent & me).
+  their named interests, or it's an obvious toddler/preschool program (storytime, sensory play, parent & me)
+  — AND the venue is convenient per the location guidance above.
 - "good": plausible and fine to attend, but not a standout — the age range is broad/unclear but not
-  exclusionary, or it's generically "family friendly" without anything specific to this kid.
+  exclusionary, it's generically "family friendly" without anything specific to this kid, or it's an
+  otherwise strong match at a venue that's a real drive away.
 - "skip": not appropriate — age range excludes the kid, explicitly for older kids/teens/adults, or the
   event is adult-oriented (bars, wineries, 21+, lectures, book clubs, teen-only, professional networking).
 
 Use common sense on the practical details too: free/low-cost and daytime or weekend timing nudge toward
 "good"/"top"; a late weeknight event nudges toward "skip" for young kids. When genuinely ambiguous, use
 "good" rather than guessing "top" or "skip".
+
+Separately, flag at most 5 events (0 is fine most weeks) as `star`: true. A star event is worth taking off
+work for or planning the weekend around — a memory-making outing, not a solid everyday activity. Think a
+mini Nutcracker or a play staged for kids, a seasonal festival, a limited-run exhibit opening, a real
+performance or one-off special event. The bar is "I want to be the kind of parent who takes their kid to
+this," not "good activity to suggest to a nanny." Recurring weekly programs (storytime, toddler time, book
+babies, generic drop-in family fun) are NOT star events even when they're a great everyday pick — routine
+disqualifies it regardless of quality. Only mark star on an event that's already "top" or "good" for at
+least one kid.
 
 Also give a one-clause reason (under 12 words) explaining the call, e.g. "storytime for ages 0-2" or
 "lecture, adults only".
@@ -109,9 +122,13 @@ def _build_tool(kids: tuple[dict, ...]) -> dict:
                                 "required": list(fit_props.keys()),
                                 "additionalProperties": False,
                             },
+                            "star": {
+                                "type": "boolean",
+                                "description": "True for a rare, memory-making, plan-the-weekend-around event (max 5 per batch). False for routine/recurring programs.",
+                            },
                             "reason": {"type": "string"},
                         },
-                        "required": ["uid", "fit", "reason"],
+                        "required": ["uid", "fit", "star", "reason"],
                         "additionalProperties": False,
                     },
                 }
@@ -163,8 +180,16 @@ def rank_events(events: list[dict], kids: tuple[dict, ...] | None = None) -> lis
 
     default_fit = {kid["name"]: "skip" for kid in kids}
     results = {r["uid"]: r for r in tool_use.input.get("rankings", [])}
+    star_count = 0
     for ev in events:
         r = results.get(ev["uid"])
         ev["_fit"] = r["fit"] if r else dict(default_fit)
         ev["_reason"] = r.get("reason", "") if r else ""
+        is_star = bool(r.get("star")) if r else False
+        # Enforce the "max 5" cap in code too, in case the model overshoots.
+        if is_star and star_count < 5:
+            star_count += 1
+        else:
+            is_star = False
+        ev["_star"] = is_star
     return events

@@ -10,7 +10,7 @@ DEFAULT_SOURCES = [
     {"name": "Lewis Ginter Garden (ICS)", "url": "https://www.lewisginter.org/events/?ical=1", "kind": "ics"},
     {"name": "Belmont Library (ICS)", "url": "https://rvalibrary.libcal.com/ical_subscribe.php?src=p&cid=7752", "kind": "ics"},
     {"name": "Main Library (ICS)", "url": "https://rvalibrary.libcal.com/ical_subscribe.php?src=p&cid=7469", "kind": "ics"},
-    {"name": "Libby Mill Library (ICS)", "url": "https://henricolibrary-va.libcal.com/ical_subscribe.php?src=p&cid=12755", "kind": "ics"},
+    {"name": "Henrico County Library (ICS)", "url": "https://henricolibrary-va.libcal.com/ical_subscribe.php?src=p&cid=12755", "kind": "ics"},
     {"name": "Richmond Cultureworks (ICS)", "url": "https://calendar.richmondcultureworks.org/calendar.ics", "kind": "ics"},
     {"name": "Macaroni KID Richmond", "url": "https://richmond.macaronikid.com/events", "kind": "macaronikid"},
 ] 
@@ -19,10 +19,16 @@ DEFAULT_SOURCES = [
 def ensure_sources():
     with SessionLocal() as s:
         for src in DEFAULT_SOURCES:
-            # Try to find existing by name first; update if URL/kind changed
+            # Match by name first, falling back to URL (e.g. after a rename
+            # in DEFAULT_SOURCES) so an existing row gets updated in place
+            # rather than silently left stale.
             existing = s.scalars(select(Source).where(Source.name == src["name"])).first()
+            if not existing:
+                existing = s.scalars(select(Source).where(Source.url == src["url"])).first()
             if existing:
                 changed = False
+                if existing.name != src["name"]:
+                    existing.name = src["name"]; changed = True
                 if existing.url != src["url"]:
                     existing.url = src["url"]; changed = True
                 if existing.kind != src["kind"]:
@@ -32,8 +38,5 @@ def ensure_sources():
                 if changed:
                     s.add(existing)
             else:
-                # Fall back to URL-based existence check
-                exists_url = s.scalars(select(Source).where(Source.url == src["url"])).first()
-                if not exists_url:
-                    s.add(Source(**src))
+                s.add(Source(**src))
         s.commit()

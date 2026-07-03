@@ -80,7 +80,7 @@ def main():
                     if e.get('venue_name'): line += f" at {e['venue_name']}"
                     if e.get('source_name'): line += f" • {e['source_name']}"
                     fit = e.get('_fit') or {}
-                    line += " | " + ", ".join(f"{k}={v}" for k, v in fit.items())
+                    line += (" [STAR]" if e.get("_star") else "") + " | " + ", ".join(f"{k}={v}" for k, v in fit.items())
                     f.write(line + "\n")
                     if e.get('occurrence_summary'):
                         f.write(f"    {e['occurrence_summary']}\n")
@@ -120,7 +120,7 @@ def main():
                     if e.get('venue_name'): line += f" at {e['venue_name']}"
                     if e.get('source_name'): line += f" • {e['source_name']}"
                     fit = e.get('_fit') or {}
-                    line += " | " + ", ".join(f"{k}={v}" for k, v in fit.items())
+                    line += (" [STAR]" if e.get("_star") else "") + " | " + ", ".join(f"{k}={v}" for k, v in fit.items())
                     f.write(line + "\n")
                     if e.get('occurrence_summary'):
                         f.write(f"    {e['occurrence_summary']}\n")

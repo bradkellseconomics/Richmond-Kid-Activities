@@ -245,12 +245,17 @@ def select_grouped_all() -> list[dict]:
 
 def bucket_sections(ranked: list[dict], more_limit: int = 40) -> list[dict]:
     """Groups an already-ranked list (see select_grouped_all) into newsletter
-    sections: top picks per kid, a combined "top for everyone" section when
-    there's more than one kid, and a lighter "more options" catch-all. Pure
-    bucketing over `_fit` — no additional ranking call."""
+    sections: star picks, top picks per kid, a combined "top for everyone"
+    section when there's more than one kid, and a lighter "more options"
+    catch-all. Pure bucketing over `_fit`/`_star` — no additional ranking call."""
     kid_names = [k["name"] for k in CFG.kids]
     sections: list[dict] = []
     used_uids: set[str] = set()
+
+    star = [e for e in ranked if e.get("_star")]
+    if star:
+        sections.append({"label": "⭐ Star Picks — plan the weekend around these", "events": star, "detailed": True})
+        used_uids.update(e["uid"] for e in star)
 
     if len(kid_names) > 1:
         both = [e for e in ranked if all(e.get("_fit", {}).get(n) == "top" for n in kid_names)]

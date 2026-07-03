@@ -9,11 +9,24 @@ load_dotenv()
 
 # One entry per kid, birthdate-based so age is always current instead of a
 # snapshot that goes stale. Override entirely via KIDS_JSON in .env, e.g.:
-# KIDS_JSON=[{"name":"Kid 1","birthdate":"2025-04-02","interests":[]},{"name":"Kid 2","birthdate":"2023-07-02","interests":["dinosaurs"]}]
+# KIDS_JSON=[{"name":"F","birthdate":"2025-04-02","interests":[]},{"name":"L","birthdate":"2023-07-02","interests":["dinosaurs"]}]
 _DEFAULT_KIDS = [
-    {"name": "Kid 1", "birthdate": "2025-04-02", "interests": []},
-    {"name": "Kid 2", "birthdate": "2023-07-02", "interests": ["dinosaurs", "animals", "construction/trucks", "books"]},
+    {"name": "F", "birthdate": "2025-04-02", "interests": []},
+    {"name": "L", "birthdate": "2023-07-02", "interests": ["dinosaurs", "animals", "construction/trucks", "books"]},
 ]
+
+# Where the family lives, in plain language — used by the ranker to weigh
+# venue convenience (a nearby branch beats a 20-minute drive to Glen Allen
+# even for an otherwise well-matched event). Override via HOME_LOCATION.
+_DEFAULT_HOME_LOCATION = (
+    "Richmond, VA, near the Belmont library branch. Strongly prefer Belmont, "
+    "Main (downtown), Libbie Mill, and Westover Hills libraries, plus other "
+    "venues within Richmond city or close-in Henrico/Chesterfield. Avoid "
+    "favoring venues that are a real drive away (e.g. Glen Allen or other "
+    "far Henrico/Chesterfield suburbs) unless the event is an exceptional, "
+    "can't-miss match — cap those at \"good\" rather than \"top\" so they "
+    "land in More Options instead of a top-pick section."
+)
 
 
 def _load_kids() -> tuple[dict, ...]:
@@ -35,6 +48,7 @@ class Config:
     to_emails: list[str] = tuple(e.strip() for e in os.getenv("TO_EMAILS","" ).split(",") if e.strip())
     db_path: str = os.getenv("DB_PATH", "./data/richmond.db")
     kids: tuple[dict, ...] = field(default_factory=_load_kids)
+    home_location: str = os.getenv("HOME_LOCATION", _DEFAULT_HOME_LOCATION)
 
 
 CFG = Config()
