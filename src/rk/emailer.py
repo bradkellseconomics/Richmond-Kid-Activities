@@ -34,31 +34,27 @@ env.filters["fmt_dt"] = _fmt_dt
 env.filters["snippet"] = _snippet
 
 
-def render_newsletter(top: list[dict], more: list[dict], week_range: str | None = None) -> tuple[str, str]:
+def render_newsletter(sections: list[dict], week_range: str | None = None) -> tuple[str, str]:
+    """`sections` is a list of {"label": str, "events": list[dict], "detailed": bool},
+    e.g. from rk.pipeline.bucket_sections."""
     tpl = env.get_template("newsletter.html.j2")
-    html = tpl.render(top=top, more=more, week_range=week_range)
+    html = tpl.render(sections=sections, week_range=week_range)
+
     def _src(e):
         return f" via {e.get('source_name')}" if e.get('source_name') else ""
 
-    heading = f"Top Picks for the week of {week_range}:" if week_range else "Top Picks:"
-    text = "\n".join(
-        [heading]
-        + [
-            (
-                f"- {e['title']} ({e['start_dt']}) @ {e.get('venue_name') or ''}{_src(e)}"
-                + (f"\n    {e.get('occurrence_summary')}" if e.get('occurrence_summary') else "")
-            )
-            for e in top
-        ]
-        + ["", "More:"]
-        + [
-            (
-                f"- {e['title']} ({e['start_dt']}) @ {e.get('venue_name') or ''}{_src(e)}"
-                + (f"\n    {e.get('occurrence_summary')}" if e.get('occurrence_summary') else "")
-            )
-            for e in more
-        ]
-    )
+    lines = []
+    for sec in sections:
+        lines.append("")
+        lines.append(f"{sec['label']}:")
+        for e in sec["events"]:
+            line = f"- {e['title']} ({e['start_dt']}) @ {e.get('venue_name') or ''}{_src(e)}"
+            if e.get('occurrence_summary'):
+                line += f"\n    {e['occurrence_summary']}"
+            if sec.get("detailed") and e.get('_reason'):
+                line += f"\n    Why: {e['_reason']}"
+            lines.append(line)
+    text = "\n".join(lines).strip()
     return html, text
 
 

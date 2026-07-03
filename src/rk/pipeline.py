@@ -10,7 +10,7 @@ from .extractors.rss_reader import RSSExtractor
 from .extractors.ics_reader import ICSExtractor
 from .extractors.html_llm import HTMLLLMExtractor
 from .extractors.macaroni_kid import MacaroniKidExtractor
-from .scoring import score_event
+from .ranker import rank_events
 from rapidfuzz import fuzz
 from urllib.parse import urlparse
 from dateutil import parser as dtp
@@ -92,11 +92,11 @@ def harvest():
         return total
 
 
-def window_next_week(start_day="sat"):
-    # Saturday through Friday window in America/New_York
+def window_next_week():
+    # Rolling 7-day window starting tomorrow, in America/New_York.
+    # E.g. run on Wed -> Thu through next Wed; run on Fri -> Sat through Fri.
     now_local = datetime.now(LOCAL_TZ)
-    offset = (5 - now_local.weekday()) % 7 if start_day == "sat" else 0
-    start = (now_local + timedelta(days=offset)).replace(hour=0, minute=0, second=0, microsecond=0)
+    start = (now_local + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + timedelta(days=7)
     return start, end
 
@@ -128,8 +128,96 @@ def _to_local_aware(dt_in):
     return d
 
 
-def select_and_score():
-    start, end = window_next_week("sat")
+def _norm_title(t: str) -> str:
+    return " ".join((t or "").lower().split())
+
+
+def _domain(u: str | None) -> str:
+    try:
+        return urlparse(u or "").netloc
+    except Exception:
+        return ""
+
+
+def _is_dupe(a: dict, b: dict) -> bool:
+    sa = _to_local_aware(a.get("start_dt")); sb = _to_local_aware(b.get("start_dt"))
+    if not sa or not sb:
+        return False
+    # Within 3 hours on same day
+    if sa.date() != sb.date():
+        return False
+    if abs((sa - sb).total_seconds()) > 3 * 3600:
+        return False
+    # Title similarity high
+    if fuzz.ratio(_norm_title(a.get("title", "")), _norm_title(b.get("title", ""))) < 90:
+        return False
+    # If venues present for both, require reasonably close
+    va, vb = (a.get("venue_name") or ""), (b.get("venue_name") or "")
+    if va and vb and fuzz.ratio(va.lower(), vb.lower()) < 85:
+        return False
+    return True
+
+
+def _dedupe(sorted_events: list[dict]) -> list[dict]:
+    unique: list[dict] = []
+    for ev in sorted_events:
+        if not any(_is_dupe(ev, u) for u in unique):
+            unique.append(ev)
+    return unique
+
+
+def _group(sorted_events: list[dict]) -> list[dict]:
+    groups: dict[tuple, list[dict]] = {}
+    for ev in sorted_events:
+        key = (
+            _norm_title(ev.get("title", "")),
+            (ev.get("venue_name") or "").strip().lower(),
+            _domain(ev.get("registration_url")),
+        )
+        groups.setdefault(key, []).append(ev)
+
+    out: list[dict] = []
+    for key, items in groups.items():
+        # Prefer the most informative record as the representative (has an age
+        # range, longer description), earliest occurrence breaks ties.
+        items.sort(key=lambda x: (
+            x.get("age_min") is None,
+            -len(x.get("description") or ""),
+            x.get("start_dt") or "",
+        ))
+        base = dict(items[0])
+        # Collect occurrences (unique, sorted)
+        times = []
+        seen = set()
+        for it in items:
+            iso = it.get("start_dt")
+            if not iso or iso in seen:
+                continue
+            seen.add(iso)
+            try:
+                dt = dtp.parse(iso)
+                times.append(dt)
+            except Exception:
+                continue
+        times.sort()
+        base["occurrences"] = [t.isoformat() for t in times]
+        # Build a compact summary for multiple occurrences
+        if len(times) > 1:
+            first = times[0]
+            same_day = all(t.date() == first.date() for t in times)
+            if same_day:
+                more_times = [t.strftime("%I:%M %p").lstrip("0").replace(" 0", " ") for t in times[1:]]
+                if more_times:
+                    base["occurrence_summary"] = "Additional times: " + ", ".join(more_times)
+            else:
+                run_start, run_end = times[0], times[-1]
+                base["occurrence_summary"] = f"Runs: {run_start.strftime('%b %d')}–{run_end.strftime('%b %d')} ({len(times)} times)"
+        out.append(base)
+    return out
+
+
+def _select_grouped() -> list[dict]:
+    start, end = window_next_week()
     with SessionLocal() as s:
         evs = list(s.scalars(select(Event)))
         # Map source_id -> source name for display
@@ -142,198 +230,42 @@ def select_and_score():
             if not (start <= st <= end):
                 continue
             d = {c.name: getattr(e, c.name) for c in Event.__table__.columns}
-            d["_score"] = score_event(d)
             d["source_name"] = src_map.get(e.source_id, "")
             picked.append(d)
-        picked.sort(key=lambda x: x["_score"], reverse=True)
-
-        def _norm_title(t: str) -> str:
-            return " ".join((t or "").lower().split())
-
-        def _domain(u: str | None) -> str:
-            try:
-                return urlparse(u or "").netloc
-            except Exception:
-                return ""
-
-        def _is_dupe(a: dict, b: dict) -> bool:
-            sa = _to_local_aware(a.get("start_dt")); sb = _to_local_aware(b.get("start_dt"))
-            if not sa or not sb:
-                return False
-            # Within 3 hours on same day
-            if sa.date() != sb.date():
-                return False
-            if abs((sa - sb).total_seconds()) > 3 * 3600:
-                return False
-            # Title similarity high
-            if fuzz.ratio(_norm_title(a.get("title","")), _norm_title(b.get("title",""))) < 90:
-                return False
-            # If venues present for both, require reasonably close
-            va, vb = (a.get("venue_name") or ""), (b.get("venue_name") or "")
-            if va and vb and fuzz.ratio(va.lower(), vb.lower()) < 85:
-                return False
-            # If registration URLs present, prefer same domain or ignore
-            da, db = _domain(a.get("registration_url")), _domain(b.get("registration_url"))
-            if da and db and da != db:
-                # Different domains might still be same event; don't block, just allow
-                pass
-            return True
-
-        def _dedupe(sorted_events: list[dict]) -> list[dict]:
-            unique: list[dict] = []
-            for ev in sorted_events:
-                if not any(_is_dupe(ev, u) for u in unique):
-                    unique.append(ev)
-            return unique
-
-        deduped = _dedupe(picked)
-
-        def _norm_title(t: str) -> str:
-            return " ".join((t or "").lower().split())
-
-        def _group(sorted_events: list[dict]) -> list[dict]:
-            groups: dict[tuple, list[dict]] = {}
-            for ev in sorted_events:
-                key = (
-                    _norm_title(ev.get("title", "")),
-                    (ev.get("venue_name") or "").strip().lower(),
-                    urlparse(ev.get("registration_url") or "").netloc,
-                )
-                groups.setdefault(key, []).append(ev)
-
-            out: list[dict] = []
-            for key, items in groups.items():
-                items.sort(key=lambda x: x.get("_score", 0), reverse=True)
-                base = dict(items[0])
-                # Collect occurrences (unique, sorted)
-                times = []
-                seen = set()
-                for it in items:
-                    iso = it.get("start_dt")
-                    if not iso or iso in seen:
-                        continue
-                    seen.add(iso)
-                    try:
-                        dt = dtp.parse(iso)
-                        times.append(dt)
-                    except Exception:
-                        continue
-                times.sort()
-                base["occurrences"] = [t.isoformat() for t in times]
-                # Build a compact summary for multiple occurrences
-                if len(times) > 1:
-                    first = times[0]
-                    same_day = all(t.date() == first.date() for t in times)
-                    if same_day:
-                        # Additional times on same day
-                        more_times = [t.strftime("%I:%M %p").lstrip("0").replace(" 0", " ") for t in times[1:]]
-                        if more_times:
-                            base["occurrence_summary"] = "Additional times: " + ", ".join(more_times)
-                    else:
-                        start = times[0]
-                        end = times[-1]
-                        base["occurrence_summary"] = f"Runs: {start.strftime('%b %d')}–{end.strftime('%b %d')} ({len(times)} times)"
-                out.append(base)
-            # Preserve original ranking: sort groups by top item's score
-            out.sort(key=lambda x: x.get("_score", 0), reverse=True)
-            return out
-
-        grouped = _group(deduped)
-        return grouped[:12], grouped[12:40]
+        # Stable order for dedupe/grouping; the LLM ranker below decides actual relevance.
+        picked.sort(key=lambda x: x.get("start_dt") or "")
+        grouped = _group(_dedupe(picked))
+        return rank_events(grouped)
 
 
-def select_grouped_all():
-    start, end = window_next_week("sat")
-    with SessionLocal() as s:
-        evs = list(s.scalars(select(Event)))
-        src_map = {src.id: src.name for src in s.scalars(select(Source))}
-        picked = []
-        for e in evs:
-            st = _to_local_aware(e.start_dt)
-            if not st:
-                continue
-            if not (start <= st <= end):
-                continue
-            d = {c.name: getattr(e, c.name) for c in Event.__table__.columns}
-            d["_score"] = score_event(d)
-            d["source_name"] = src_map.get(e.source_id, "")
-            picked.append(d)
-        picked.sort(key=lambda x: x["_score"], reverse=True)
+def select_grouped_all() -> list[dict]:
+    """Full ranked candidate list for the week (one Claude ranking call)."""
+    return _select_grouped()
 
-        def _norm_title(t: str) -> str:
-            return " ".join((t or "").lower().split())
 
-        def _domain(u: str | None) -> str:
-            try:
-                return urlparse(u or "").netloc
-            except Exception:
-                return ""
+def bucket_sections(ranked: list[dict], more_limit: int = 40) -> list[dict]:
+    """Groups an already-ranked list (see select_grouped_all) into newsletter
+    sections: top picks per kid, a combined "top for everyone" section when
+    there's more than one kid, and a lighter "more options" catch-all. Pure
+    bucketing over `_fit` — no additional ranking call."""
+    kid_names = [k["name"] for k in CFG.kids]
+    sections: list[dict] = []
+    used_uids: set[str] = set()
 
-        def _is_dupe(a: dict, b: dict) -> bool:
-            sa = _to_local_aware(a.get("start_dt")); sb = _to_local_aware(b.get("start_dt"))
-            if not sa or not sb:
-                return False
-            if sa.date() != sb.date():
-                return False
-            if abs((sa - sb).total_seconds()) > 3 * 3600:
-                return False
-            if fuzz.ratio(_norm_title(a.get("title","")), _norm_title(b.get("title",""))) < 90:
-                return False
-            va, vb = (a.get("venue_name") or ""), (b.get("venue_name") or "")
-            if va and vb and fuzz.ratio(va.lower(), vb.lower()) < 85:
-                return False
-            return True
+    if len(kid_names) > 1:
+        both = [e for e in ranked if all(e.get("_fit", {}).get(n) == "top" for n in kid_names)]
+        if both:
+            sections.append({"label": "Top for " + " & ".join(kid_names), "events": both, "detailed": True})
+            used_uids.update(e["uid"] for e in both)
 
-        def _dedupe(sorted_events: list[dict]) -> list[dict]:
-            unique: list[dict] = []
-            for ev in sorted_events:
-                if not any(_is_dupe(ev, u) for u in unique):
-                    unique.append(ev)
-            return unique
+    for name in kid_names:
+        solo = [e for e in ranked if e["uid"] not in used_uids and e.get("_fit", {}).get(name) == "top"]
+        if solo:
+            sections.append({"label": f"Top for {name}", "events": solo, "detailed": True})
+            used_uids.update(e["uid"] for e in solo)
 
-        def _group(sorted_events: list[dict]) -> list[dict]:
-            groups: dict[tuple, list[dict]] = {}
-            for ev in sorted_events:
-                key = (
-                    _norm_title(ev.get("title", "")),
-                    (ev.get("venue_name") or "").strip().lower(),
-                    urlparse(ev.get("registration_url") or "").netloc,
-                )
-                groups.setdefault(key, []).append(ev)
+    more = [e for e in ranked if e["uid"] not in used_uids and any(e.get("_fit", {}).get(n) == "good" for n in kid_names)]
+    if more:
+        sections.append({"label": "More Options", "events": more[:more_limit], "detailed": False})
 
-            out: list[dict] = []
-            for key, items in groups.items():
-                items.sort(key=lambda x: x.get("_score", 0), reverse=True)
-                base = dict(items[0])
-                times = []
-                seen = set()
-                for it in items:
-                    iso = it.get("start_dt")
-                    if not iso or iso in seen:
-                        continue
-                    seen.add(iso)
-                    try:
-                        dt = dtp.parse(iso)
-                        times.append(dt)
-                    except Exception:
-                        continue
-                times.sort()
-                base["occurrences"] = [t.isoformat() for t in times]
-                if len(times) > 1:
-                    first = times[0]
-                    same_day = all(t.date() == first.date() for t in times)
-                    if same_day:
-                        more_times = [t.strftime("%I:%M %p").lstrip("0").replace(" 0", " ") for t in times[1:]]
-                        if more_times:
-                            base["occurrence_summary"] = "Additional times: " + ", ".join(more_times)
-                    else:
-                        start_d = times[0]
-                        end_d = times[-1]
-                        base["occurrence_summary"] = f"Runs: {start_d.strftime('%b %d')}–{end_d.strftime('%b %d')} ({len(times)} times)"
-                out.append(base)
-            out.sort(key=lambda x: x.get("_score", 0), reverse=True)
-            return out
-
-        deduped = _dedupe(picked)
-        grouped = _group(deduped)
-        return grouped
+    return sections

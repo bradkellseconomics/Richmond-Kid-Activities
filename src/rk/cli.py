@@ -1,11 +1,23 @@
 from __future__ import annotations
 import argparse, os
-from .pipeline import harvest, select_and_score, select_grouped_all, init_db, window_next_week
+from .pipeline import harvest, select_grouped_all, bucket_sections, init_db, window_next_week
 from .db import SessionLocal
 from .models import Event, Source
 from sqlalchemy import select
 from .sources import ensure_sources, DEFAULT_SOURCES
 from .emailer import render_newsletter, send_email
+from .config import CFG
+
+
+def _print_sections(sections: list[dict]) -> None:
+    counts = ", ".join(f"{s['label']}={len(s['events'])}" for s in sections)
+    print(f"Selected events: {counts}")
+    for sec in sections:
+        print(f"{sec['label']}:")
+        for e in sec["events"]:
+            src = e.get('source_name') or ''
+            reason = e.get('_reason') or ''
+            print(f"- {e['title']} | {e['start_dt']} | {e.get('venue_name') or ''} | {src} | {reason}")
 
 
 def main():
@@ -26,23 +38,25 @@ def main():
         ensure_sources(); n = harvest(); print(f"Harvested {n} events")
     elif args.cmd == "weekly":
         ensure_sources(); harvest()
-        top, more = select_and_score()
+        sections = bucket_sections(select_grouped_all())
         from datetime import timedelta
-        start, end = window_next_week("sat")
+        start, end = window_next_week()
         end_disp = end - timedelta(days=1)
         week_range = f"{start.strftime('%a %b %d')} - {end_disp.strftime('%a %b %d')}"
-        html, text = render_newsletter(top, more, week_range=week_range)
+        html, text = render_newsletter(sections, week_range=week_range)
         send_email("Richmond Kids: Next Week", html, text)
-        print(f"Sent newsletter. Top={len(top)}, More={len(more)}")
+        counts = ", ".join(f"{s['label']}={len(s['events'])}" for s in sections)
+        print(f"Sent newsletter. {counts}")
     elif args.cmd == "preview":
         # Harvest, render, and write to files locally without sending email
         ensure_sources(); harvest()
-        top, more = select_and_score()
+        all_grouped = select_grouped_all()
+        sections = bucket_sections(all_grouped)
         from datetime import timedelta
-        start, end = window_next_week("sat")
+        start, end = window_next_week()
         end_disp = end - timedelta(days=1)
         week_range = f"{start.strftime('%a %b %d')} - {end_disp.strftime('%a %b %d')}"
-        html, text = render_newsletter(top, more, week_range=week_range)
+        html, text = render_newsletter(sections, week_range=week_range)
         out_dir = os.path.join(os.getcwd(), "newsletter_output")
         os.makedirs(out_dir, exist_ok=True)
         html_path = os.path.join(out_dir, "newsletter_preview.html")
@@ -55,7 +69,6 @@ def main():
         try:
             import json
             from .emailer import _fmt_dt
-            all_grouped = select_grouped_all()
             full_json = os.path.join(out_dir, "selection_full.json")
             with open(full_json, "w", encoding="utf-8") as f:
                 # Convert any datetime fields (e.g., first_seen/last_seen) to strings
@@ -66,21 +79,25 @@ def main():
                     line = f"{idx:2d}. {e.get('title','')} — {_fmt_dt(e.get('start_dt',''))}"
                     if e.get('venue_name'): line += f" at {e['venue_name']}"
                     if e.get('source_name'): line += f" • {e['source_name']}"
-                    line += f" | score={e.get('_score')}"
+                    fit = e.get('_fit') or {}
+                    line += " | " + ", ".join(f"{k}={v}" for k, v in fit.items())
                     f.write(line + "\n")
                     if e.get('occurrence_summary'):
                         f.write(f"    {e['occurrence_summary']}\n")
+                    if e.get('_reason'):
+                        f.write(f"    Why: {e['_reason']}\n")
             print(f"Wrote preview files:\n- {html_path}\n- {txt_path}\n- {full_json}\n- {full_txt}")
         except Exception as e:
             print(f"[WARN] Could not write selection_full files: {e}")
     elif args.cmd == "preview-existing":
         # Use existing DB contents; do not harvest
-        top, more = select_and_score()
+        all_grouped = select_grouped_all()
+        sections = bucket_sections(all_grouped)
         from datetime import timedelta
-        start, end = window_next_week("sat")
+        start, end = window_next_week()
         end_disp = end - timedelta(days=1)
         week_range = f"{start.strftime('%a %b %d')} - {end_disp.strftime('%a %b %d')}"
-        html, text = render_newsletter(top, more, week_range=week_range)
+        html, text = render_newsletter(sections, week_range=week_range)
         out_dir = os.path.join(os.getcwd(), "newsletter_output")
         os.makedirs(out_dir, exist_ok=True)
         html_path = os.path.join(out_dir, "newsletter_preview.html")
@@ -93,7 +110,6 @@ def main():
         try:
             import json
             from .emailer import _fmt_dt
-            all_grouped = select_grouped_all()
             full_json = os.path.join(out_dir, "selection_full.json")
             with open(full_json, "w", encoding="utf-8") as f:
                 json.dump(all_grouped, f, ensure_ascii=False, indent=2, default=str)
@@ -103,10 +119,13 @@ def main():
                     line = f"{idx:2d}. {e.get('title','')} — {_fmt_dt(e.get('start_dt',''))}"
                     if e.get('venue_name'): line += f" at {e['venue_name']}"
                     if e.get('source_name'): line += f" • {e['source_name']}"
-                    line += f" | score={e.get('_score')}"
+                    fit = e.get('_fit') or {}
+                    line += " | " + ", ".join(f"{k}={v}" for k, v in fit.items())
                     f.write(line + "\n")
                     if e.get('occurrence_summary'):
                         f.write(f"    {e['occurrence_summary']}\n")
+                    if e.get('_reason'):
+                        f.write(f"    Why: {e['_reason']}\n")
             print(f"Wrote preview files (existing DB):\n- {html_path}\n- {txt_path}\n- {full_json}\n- {full_txt}")
         except Exception as e:
             print(f"[WARN] Could not write selection_full files: {e}")
@@ -132,6 +151,7 @@ def main():
                 "cost_max": 0,
                 "registration_url": "https://example.org/a",
                 "tags": {},
+                "_reason": "storytime for ages 3-6",
             },
             {
                 "uid": "dummy2",
@@ -152,6 +172,7 @@ def main():
                 "cost_max": 10,
                 "registration_url": "https://example.org/b",
                 "tags": {},
+                "_reason": "hands-on science, ages 7-12",
             },
         ]
         more = [
@@ -176,7 +197,11 @@ def main():
                 "tags": {},
             }
         ]
-        html, text = render_newsletter(top, more)
+        sections = [
+            {"label": "Top Picks", "events": top, "detailed": True},
+            {"label": "More Options", "events": more, "detailed": False},
+        ]
+        html, text = render_newsletter(sections)
         out_dir = os.path.join(os.getcwd(), "newsletter_output")
         os.makedirs(out_dir, exist_ok=True)
         html_path = os.path.join(out_dir, "newsletter_preview.html")
@@ -186,36 +211,15 @@ def main():
         with open(txt_path, "w", encoding="utf-8") as f:
             f.write(text)
         print(f"Wrote preview files (dummy data):\n- {html_path}\n- {txt_path}")
-        print(f"Wrote preview files (dummy data):\n- {html_path}\n- {txt_path}")
     elif args.cmd == "preview-list":
         # Show which events were selected for the upcoming newsletter (fresh harvest)
         ensure_sources(); harvest()
-        top, more = select_and_score()
-        print(f"Selected events: top={len(top)}, more={len(more)}")
-        if top:
-            print("Top Picks:")
-            for e in top:
-                src = e.get('source_name') or ''
-                print(f"- {e['title']} | {e['start_dt']} | {e.get('venue_name') or ''} | {src} | score={e.get('_score')}")
-        if more:
-            print("More:")
-            for e in more:
-                src = e.get('source_name') or ''
-                print(f"- {e['title']} | {e['start_dt']} | {e.get('venue_name') or ''} | {src} | score={e.get('_score')}")
+        sections = bucket_sections(select_grouped_all())
+        _print_sections(sections)
     elif args.cmd == "preview-list-existing":
         # Show which events were selected using current DB only (no harvest)
-        top, more = select_and_score()
-        print(f"Selected events (existing DB): top={len(top)}, more={len(more)}")
-        if top:
-            print("Top Picks:")
-            for e in top:
-                src = e.get('source_name') or ''
-                print(f"- {e['title']} | {e['start_dt']} | {e.get('venue_name') or ''} | {src} | score={e.get('_score')}")
-        if more:
-            print("More:")
-            for e in more:
-                src = e.get('source_name') or ''
-                print(f"- {e['title']} | {e['start_dt']} | {e.get('venue_name') or ''} | {src} | score={e.get('_score')}")
+        sections = bucket_sections(select_grouped_all())
+        _print_sections(sections)
     elif args.cmd == "mk-debug":
         # Debug Macaroni KID extraction without touching DB
         from .extractors.macaroni_kid import MacaroniKidExtractor

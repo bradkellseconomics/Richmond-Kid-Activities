@@ -2,9 +2,11 @@
 <html>
   <body style="font-family:Arial, sans-serif;">
     <h2>Richmond Kids — Week of {{ week_range }}</h2>
-    <h3>Top Picks{% if week_range %} for the week of {{ week_range }}{% endif %}</h3>
+    {% for sec in sections %}
+    <h3>{{ sec.label }}</h3>
     <ul>
-      {% for e in top %}
+      {% for e in sec.events %}
+      {% if sec.detailed %}
       <li>
         <strong>{{e.title}}</strong> — {{ e.start_dt | fmt_dt }}
         {% if e.venue_name %} at {{e.venue_name}}{% endif %}
@@ -13,17 +15,16 @@
         {% if e.occurrence_summary %}
         <div style="color:#777; font-size: 90%;">{{ e.occurrence_summary }}</div>
         {% endif %}
+        {% if e._reason %}
+        <div style="color:#888; font-size: 90%; font-style: italic;">{{ e._reason }}</div>
+        {% endif %}
         <div style="color:#555">{{ e.description | snippet(280) }}</div>
       </li>
-      {% endfor %}
-    </ul>
-    {% if more %}
-    <h3>More Options</h3>
-    <ul>
-      {% for e in more %}
+      {% else %}
       <li>{{e.title}} — {{ e.start_dt | fmt_dt }}{% if e.venue_name %} at {{e.venue_name}}{% endif %}{% if e.source_name %} • {{e.source_name}}{% endif %}</li>
+      {% endif %}
       {% endfor %}
     </ul>
-    {% endif %}
+    {% endfor %}
   </body>
   </html>

@@ -14,15 +14,6 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install xvfb
-        run: sudo apt-get update && sudo apt-get install -y xvfb
-
-      - name: Install Playwright (pip)
-        run: pip install playwright
-
-      - name: Install Playwright browsers
-        run: python -m playwright install --with-deps chromium
-
       - run: pip install -e .
       - run: mkdir -p data
       - run: rk init
@@ -44,19 +35,17 @@ jobs:
           DB_PATH: data/richmond.db
 
       - name: Run weekly
-        run: xvfb-run -a rk weekly
+        run: rk weekly
         env:
           RK_DEBUG: "1"
-          RK_MACKID_HEADFUL: "1"
-          RK_MACKID_TIMEOUT_MS: "45000"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
           TO_EMAILS: ${{ secrets.TO_EMAILS }}
-          KIDS_AGES: 1,2
           DB_PATH: data/richmond.db
       - name: Upload debug artifacts
         if: always()
@@ -64,6 +53,5 @@ jobs:
         with:
           name: rk-output
           path: |
-            newsletter_output/last_normalized.csv
-            newsletter_output/last_skips.log
-            newsletter_output/mackid_debug/**
+            newsletter_output/**
+            data/debug/**
